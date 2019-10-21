@@ -1,0 +1,655 @@
+<!doctype html><html><head><meta charset="windows-1251"><script src="VkMsgExport\VkMsgExport.js"></script>
+<title>VkMsgExport</title>
+</head><body>
+
+<script>
+"use strict";
+(function(){
+var TXT,RAW,MSG,COL;
+var Format,
+CurrentColor,
+MsgToIndex,
+IndexToMsg,
+LastClickedMessage,
+ColorToBack,
+AllMessagesArray,
+AllColorsArray,
+AllUsersBase;
+
+function RenderFrom(From){
+	return '<b class="from">'+From+'</b>: ';
+}
+
+function RenderTime(Time){
+	return '<i class="time">('+Time+')</i> ';
+}
+
+function RenderHead(Head){
+	if(Format==MSG||Format==COL)
+		return '<div class="head">'+Head+'</div>';
+	return '<hr><div class="head">'+Head+'</div>';
+}
+
+
+function BodyProc(Body){
+	Body=' '+Body+' ';
+	Body=Body.replace(/(\s|[.,:=(*)[\]{+}-])(\w+:\/\/[^(,)[\]{\s}]+)/g,'$1<u>$2</u>');
+	Body=Body.replace(/(\s)((?:\w+\.)*\w+\.\w+\/[^(,)[\]{\s}]*)/g,'$1<u>$2</u>');
+	return Body.replace(/\n\n\n+/g,'\n\n').replace(/\n/g,'<br>').trim();
+}
+
+function IdToName(From){
+	var User=AllUsersBase[From];
+	if(User)
+		User=((User.first_name?User.first_name:'')+' '+(User.last_name?User.last_name:'')).trim();
+	else
+		User='';
+	if(User=='')
+		User='id'+From;
+	return '<span title="'+EscHtm('id'+From)+'">'+EscHtm(User)+'</span>';
+}
+
+function EscHtm(Text){
+	return (''+Text)
+		.replace(/&#/g,'\ufffd')
+		.replace(/&/g,'&amp;')
+		.replace(/</g,'&lt;')
+		.replace(/>/g,'&gt;')
+		.replace(/\ufffd/g,'&#')
+		.trim();
+}
+
+function Zero(Num){
+	return(Num>9?(''+Num):('0'+Num));
+}
+
+function PrintDate(Timestamp,OldDate){
+	var NoteOld='';
+	if(OldDate){
+	OldDate=Timestamp-OldDate;
+		if(OldDate>0){
+			var TimeValues=[60,   60,   24,   30,  12];
+			var TimeNames=['сек','мин','час','дн','мес','год'];
+			var Type;
+			for(Type=0;Type<5;Type++){
+				if(OldDate<TimeValues[Type])
+					break;
+				OldDate=Math.floor(OldDate/TimeValues[Type]);
+			}
+			if(OldDate<100)
+				NoteOld='; +'+OldDate+' '+TimeNames[Type];
+		}
+	}
+	var Time=new Date(Timestamp*1000);
+	return (Time.getFullYear())
+		+'-'+Zero(Time.getMonth()+1)
+		+'-'+Zero(Time.getDate())
+		+', '+Time.getHours()
+		+':'+Zero(Time.getMinutes())
+		+':'+Zero(Time.getSeconds())
+		+NoteOld;
+}
+
+function PrintSeconds(Time){
+	var Minutes=Math.floor(Time/60);
+	if(Minutes<60) 
+		return Minutes+':'+Zero(Time-60*Minutes);
+	var Hours=Math.floor(Minutes/60);
+	return Hours+':'+Zero(Minutes-60*Hours)+':'+Zero(Time-60*Minutes);	
+}
+
+function RemoveParams(Url){
+	return EscHtm((''+Url)
+		.replace(/\?.*/,''));
+}
+
+function PrintSize(Bytes){
+	if(Bytes<0)
+		return '0';
+	if(Bytes<1024)
+		return Bytes+' b';
+	var Size=Math.round(Bytes*1000/1024);
+	var Names=[' Kb',' MB',' GB!'];
+	for(var Type=0;Type<3;Type++){
+		if(Size<10000)
+			return(''+Size).substr(0,1)+'.'+(''+Size).substr(1,2)+Names[Type];
+		if(Size<100000)
+			return(''+Size).substr(0,2)+'.'+(''+Size).substr(2,1)+Names[Type];
+		if(Size<1000000)
+			return(''+Size).substr(0,3)+Names[Type];
+		Size=Math.round(Size/1024);
+	}
+	return '0';
+}
+
+function GoodFrom(Message){
+	if(Message.from_id)
+		return Message.from_id;
+	return Message.user_id;
+}
+
+function GetMinAndMax(DataObject,Preffix){
+	var Len=Preffix.length;
+	var Min=-1,Max=-1;
+	var Value;
+	for(var Element in DataObject)
+		if(Element.substr(0,Len)==Preffix){
+			Value=+Element.substr(Len);
+			if(Min==-1||Value<Min)
+				Min=Value;
+			if(Max==-1||Value>Max)
+				Max=Value;
+		}
+	if(Min<0)
+		return {min:'',max:''};
+	return {min:DataObject[Preffix+Min],max:DataObject[Preffix+Max]};
+}
+
+function AttachProc(Attachment){
+	var Type=Attachment.type;
+	var Min,Max,Photo;
+	var Res,Obj;
+	if(Type=='audio'){
+		Obj=Attachment.audio;
+		Res='[<u>аудио</u> '
+			+PrintSeconds(Obj.duration)
+			+' ('+EscHtm(Obj.artist)+')'
+			+' "<b>'+EscHtm(Obj.title)+'</b>"'
+			+' <i>'+PrintDate(Obj.date)+'</i>]: '
+			+EscHtm('https://vk.com/dev/audio.get?params[owner_id]='+Obj.owner_id+'&params[audio_ids]='+Obj.id+'&params[need_user]=0&params[offset]=0&params[count]=1&params[v]=5.60');
+	}
+	else if(Type=='photo'){
+		Obj=Attachment.photo;
+		Photo=GetMinAndMax(Obj,'photo_');
+		Max=Photo.max;
+		Min=Photo.min;
+		Res='[<u>фото</u> '+Obj.width+'x'+Obj.height+(Obj.text!=''?' "'+EscHtm(Obj.text)+'"':'')+' ('+RemoveParams(Min)+') <i>'+PrintDate(Obj.date)+'</i>]: <b>'+RemoveParams(Max)+'</b>';
+	}
+	else if(Type=='video'){
+		Obj=Attachment.video;
+		Photo=GetMinAndMax(Obj,'photo_');
+		Max=Photo.max;
+		Min=Photo.min;
+		var Link=RemoveParams(Min);
+		if(Min!=Max)
+			Link+=' / '+RemoveParams(Max);
+		Res='[<u>видео</u> '
+			+PrintSeconds(Obj.duration)
+			+' ('+Link+')'
+			+' "<b>'+EscHtm(Obj.title)+'</b>"'
+			+' <i>'+PrintDate(Obj.date)+'</i>]:'
+			+' <i>'+EscHtm(Obj.description)+'</i>'
+			+' - '+(Obj.player?'<b>'+EscHtm(Obj.player)+'</b> ':'')
+			+EscHtm('https://vk.com/dev/video.get?params[owner_id]=&params[videos]='+Obj.owner_id+'_'+Obj.id+'_'+Obj.access_key+'&params[album_id]=&params[count]=1&params[offset]=0&params[extended]=1&params[v]=5.60');
+	}
+	else if(Type=='link'){
+		Obj=Attachment.link;
+		var Descr=Obj.description;
+		if(Descr&&Descr!='')
+			Descr='"<i>'+EscHtm(Obj.description)+'</i>"';
+		Res='[<u>ссылка</u> '+EscHtm(Obj.caption)+Descr+']:'
+			+' <b>'+EscHtm(Obj.title)+'</b> - <u>'+EscHtm(Obj.url)+'</u>';
+	}
+	else if(Type=='doc'){
+		Obj=Attachment.doc;
+		Res='[<u>файл</u> '+EscHtm(Obj.ext.toUpperCase())+', '+PrintSize(Obj.size)+']: <b>'+EscHtm(Obj.title)+'</b> - '+EscHtm(Obj.url);
+	}
+	else if(Type=='sticker'){
+		Obj=Attachment.sticker;
+		Photo=GetMinAndMax(Obj,'photo_');
+		Max=Photo.max;
+		Min=Photo.min;
+		Res='[<u>стикер</u> <i>'+RemoveParams(Min)+'</i>]: <b>'+RemoveParams(Max)+'</b>';
+	}
+	else if(Type=='wall'){
+		Obj=Attachment.wall;
+		Res='[<u>стена</u> <i>'+PrintDate(Obj.date)+'</i>]: '+EscHtm(Obj.text)+' <b>https://m.vk.com/wall'+Obj.to_id+'_'+Obj.id+'</b>';
+	}
+	else if(Type=='wall_reply'){
+		Obj=Attachment.wall;
+		Res='[<u>комментарий</u> <i>'+PrintDate(Obj.date)+'</i>]: '+EscHtm(Obj.text)+' <b>https://m.vk.com/wall'+Obj.owner_id+'_'+Obj.post_id+'?reply='+Obj.id+'#reply'+Obj.id+'</b>';
+	}else{
+		Res='[<u>неизвестное вложение</u>]';
+	}
+	return Res;
+}
+
+function MessageHash(Msg){
+	var One;
+	var Hash=Msg.body+' '+GoodFrom(Msg)+' ';
+	if(Msg.attachments)
+		for(var Idx=Msg.attachments.length;Idx--;){
+			One=Msg.attachments[Idx][Msg.attachments[Idx].type];
+			Hash+=Msg.attachments[Idx].type
+				+' '+One.to_id
+				+' '+GetMinAndMax(One,'photo_').max
+				+' '+One.title
+				+' '+One.url
+				+' '+One.id
+				+' ';
+	}
+	if(Msg.fwd_messages)
+		for(Idx=Msg.fwd_messages.length;Idx--;)
+			Hash+=' '+MessageHash(Msg.fwd_messages[Idx]);
+	return Hash;
+}
+
+/*
+function quo(t,br){
+return t.replace(/(\s*\n+\s*)+/,br?'<br>':' \\ ');
+}
+function allbody(m,q){
+var b,a,i,t;
+b=q?quo(m.body):m.body;
+t='';
+a=m.attachments;
+if(a)for(i=0;i<a.length;i++)t+=attach(a[i]);
+return EscHtm(b,true)+quo(t,!q);
+}
+*/
+
+function ActionProc(Message,From){
+	var Action=Message.action;
+	var Max=GetMinAndMax(Message,'photo_').max;
+	var Text=Message.action_text;
+	var Res;
+	if(Action=='chat_photo_update'){
+		Res='[<u>Новая аватарка</u>]';
+		if(Max!='')
+			Res+=': <b>'+RemoveParams(Max)+'</b>';		
+	}
+	else if(Action=='chat_photo_remove'){
+		Res='[<u>Аватарка удалена</u>]';
+		if(Max!='')
+			Res+=': <b>'+RemoveParams(Max)+'</b>';
+	}
+	else if(Action=='chat_create'){
+		Res='[<u>Создана конферениция</u>]';
+		if(Text)
+			Res+=': <b>'+EscHtm(Text)+'</b>';
+	}
+	else if(Action=='chat_title_update'){
+		Res='[<u>Название изменено</u>]';
+		if(Text)
+			Res+=': <b>'+EscHtm(Text)+'</b>';
+	}
+	else if(Action=='chat_invite_user'||Action=='chat_kick_user'){
+		var Who;
+		if(Message.action_mid<0)
+			Who=Message.action_email;
+		else
+			Who=Message.action_mid;
+		var Invite=(Action=='chat_invite_user');
+		if(Who!=From){
+			if(Invite)
+				Res='[<u>Участник приглашён</u>]';
+			else
+				Res='[<u>Участник исключён</u>]';
+		}else{
+			if(Invite)
+				Res='[<u>Участник вернулся</u>]';
+			else
+				Res='[<u>Участник ушёл</u>]';
+		}
+		if(Who)
+			Res+=': <b>'+EscHtm(Who)+'</b>';
+	}
+	else {
+		Res='[<u>Неизвестное действие</u>]: '+Action;
+	}
+	return Res;
+}
+
+function QuoteProc(Message,Quot,From){
+	var Fwd=Message.fwd_messages;
+	var Msg,Hash;
+	var Res='';
+	var Type=0;
+	var Length=Fwd.length;
+	for(var Index=0;Index<Length;Index++){
+		Msg=Fwd[Index];
+		Hash=MessageHash(Msg);
+		if(!Quot[Hash])
+			if(Msg.fwd_messages)
+				Res+=QuoteProc(Msg,Quot,From);
+		if(Quot[Hash]==From){
+			//Res+='<span style="color:green;">';
+			Type=1;
+		}else{
+			if(Quot[Hash]){
+				//Res+='<span style="color:blue;">';
+				Type=2;
+			}else{
+				//Res+='<span style="color:red;">';
+				Type=3;
+			}
+		}
+		Res+=MessageProc(-1,Msg,Quot,Type);
+		//Res+='</span>';
+	}
+	return Res;
+}
+
+/*
+if(Q[S[i].body]){
+Qt+='&gt; '+(Q[S[i].body]==F?'&gt; ':'')+S[i].body.replace(/\n.* /gm,'')+'<br>';
+}else{
+R=function(m){var i,Obj,a;
+a=m.fwd_messages;
+if(a)for(i=0;i<a.length;i++)R(a[i]);
+if(m.body=='')return;
+u=EscHtm(m.body);
+Obj=m.user_id;
+Qt+='<u>'+Obj+'</u>: '+u+'<br>';
+Qh+='<div class="quote"><u class="from">'+Obj+'</u>: '+u+'</div>';
+Qb+='[u]<u>'+Obj+'</u>[/u]: '+u+'<br>';
+};R(S[i]);
+}
+Qt+='<br>';
+*/
+
+
+
+function MessageProc(Index,Message,Quot,Type,OldMess){
+	var From=GoodFrom(Message);
+	var Body=Message.body.trim();
+	var Id=Message.id;
+	if(Body!=''||Type==3){
+		if(Type>0){
+			Body=Body.replace(/(\s*\n+\s*)+/gm,'\n');
+			if(Type==3){
+				Body='>('+IdToName(From)+')> '+EscHtm(Body.replace(/\n/gm,'\n>(\u2026)> '));
+			}else{
+				var NoQuotes=(('\n'+Body).replace(/\n\s*>[^\n]*\n/gm,'\n')).trim();
+				if(NoQuotes!='')
+					Body=NoQuotes;
+				NoQuotes=Body.replace(/\n/gm,'\n\n').replace(/\n[\s\S]*\n/gm,' <\u2026> ');
+				if(Type==2)
+					Body='> '+EscHtm(NoQuotes);
+				if(Type==1)
+					Body='> > '+EscHtm(NoQuotes);
+			}
+		}else 
+			Body=EscHtm(Body);
+		Body=BodyProc(Body);
+	}
+
+	if(Message.action)
+		Body=ActionProc(Message,From);
+
+	if(Type==0&&Message.fwd_messages){
+		if(Message.fwd_messages.length!=1||Quot['']!=MessageHash(Message.fwd_messages[0]))
+			Body=QuoteProc(Message,Quot,From)+'<br>'+Body;
+	}
+
+	var MsgId=MsgIdToId(Id);
+	var Res='';
+	if(Type==0){
+		MsgToIndex[MsgId]=Index;
+		IndexToMsg[Index]=MsgId;
+		var Hash=MessageHash(Message)
+		Quot['']=Hash;
+		Quot[Hash]=From;
+		if(!OldMess||From!=GoodFrom(OldMess)||Message.date-OldMess.date>60*10||Message.date<OldMess.date)
+			Res+=RenderHead(RenderFrom(IdToName(From))+RenderTime(PrintDate(Message.date,OldMess?OldMess.date:null)));
+		Res+=Body+'<br>';
+		if(Message.attachments){
+			Res+='<div style="color:#333">';
+			var Len=Message.attachments.length;
+			for(var Idx=0;Idx<Len;Idx++)
+				Res+=AttachProc(Message.attachments[Idx])+'<br>';
+			Res+='</div>';
+		}
+		if(Format==RAW)Res+='<br><span style="color:#666">'+EscHtm(StringifyBunch([Message]))+'</span><br>';
+		Res+='<br>';
+	}else{
+		if(Body!='')
+			Res+=Body+'<br>';
+		if(Type==3||(Body==''))
+			if(Message.attachments){
+				var Len=Message.attachments.length;
+				for(var Idx=0;Idx<Len;Idx++)
+					Res+='&gt; '+AttachProc(Message.attachments[Idx])+'<br>';
+			}
+	}
+
+	if(Type==0){
+		if(Format==MSG){
+			Res+='<span style="width:0;height:0;overflow:hidden;position:relative;color:blue;display:block;"><BR>'+EscHtm(StringifyBunch([Message]))+'<BR><BR><BR><BR><BR><BR><BR><BR></span>';
+			Res='<div class="message" contenteditable=false>'+Res+'</div><hr>';
+		}
+		else if(Format==COL){
+			var Color=AllColorsArray[Index]=Message.color||1;
+			Res='<div class="message '+ColorToClass(Color)+'" id="'+MsgId+'">'+Res+'</div>';
+		}
+		return Res;
+	}
+
+	return Res;
+}
+//h+='<div class="message"><b class="user">'+F+'</b>: <i class="time">('+D+')</i><div class="text">'+Qh+B+'</div>';
+//b+='[b]<b>'+F+'</b>[/b]: [i]<i>('+D+')</i>[/i]<br>'+Qb+B+'<br>';
+
+function ParseBunch(Text){
+	var Arr=[];
+	var Res=('\n'+Text+'\n')
+		.replace(/\n~{/g,'\n\ufffd{')
+		.replace(/}~\n/g,'}\ufffd\n')
+		.match(/\n\ufffd[^\ufffd]+/g);
+	if(!Res)
+			return Arr;
+	var Len=Res.length;
+	for(var Idx=0;Idx<Len;Idx++){
+		try{
+			Arr.push(JSON.parse(Res[Idx].substr(2)));
+		}catch(e){};
+	}
+	return Arr;
+}
+
+function StringifyBunch(Mess){
+	if(Mess.length<1)
+		return '';
+	Mess=Mess.map(function(Obj){
+			return JSON.stringify(Obj);
+		});
+	return '~'+Mess.join('~\n~')+'~';	
+}
+
+function TextareaProc(Textarea){
+		Textarea.value=StringifyBunch(ParseBunch(Textarea.value))+'\n\n\n\n';	
+}
+
+function ColorToClass(Color){
+	return 'color_'+Color;
+}
+
+function MsgIdToId(Id){
+	return 'id_'+EscHtm(Id);
+}
+
+function ClassFilter(List,Filter){
+	var Rev={};
+	var Remove=[];
+	var Idx;
+	for(Idx=Filter.length;Idx--;)
+		if(Filter[Idx]!='')
+			Rev[Filter[Idx]]=true;
+	for(Idx=List.length;Idx--;)
+		if(!Rev[List[Idx]])
+			Remove.push(List[Idx]);
+	for(Idx=Remove.length;Idx--;)
+		List.remove(Remove[Idx]);
+}
+
+function PaintMessage(Element,Color){
+	if(!Color)
+		Color=1;
+	Element.className='message '+ColorToClass(Color);
+	AllColorsArray[MsgToIndex[MsgIdToId(Element.id)]]=Color;
+}
+
+function ColorProc(Event,Double){
+	if(!Event||!Event.target||CurrentColor<1)
+		return;
+	var Target=Event.target;
+	if(!Target||!Target.classList||CurrentColor<1)
+		return;
+	var Check=document.getElementById('brush_check');
+	if(Check.checked){
+		Check.checked=false;
+		return;
+	}
+	while(!Target.classList.contains('message')){
+		Target=Target.parentNode;
+		if(Target.classList.contains('stop'))
+			return;
+	}
+	var List;
+	var Class=ColorToClass(CurrentColor);
+	if(Double){
+		if(LastClickedMessage!=''){
+			var Begin=MsgToIndex[Target.id];
+			var End=MsgToIndex[LastClickedMessage[0]];
+			if(typeof(Begin)!='number'||typeof(End)!='number')
+				return;
+			if(Begin>End){
+				var Temp=Begin;
+				Begin=End;
+				End=Temp;
+			}
+			for(var Idx=Begin;Idx<=End;Idx++)
+				PaintMessage(document.getElementById(IndexToMsg[Idx]),CurrentColor);
+		}
+	}else{
+		if(Target.classList.contains(Class))
+			PaintMessage(Target,1);
+		else
+			PaintMessage(Target,CurrentColor);
+		if(Target.id!=LastClickedMessage[1]){
+			LastClickedMessage[0]=LastClickedMessage[1];
+			LastClickedMessage[1]=Target.id;
+		}
+	}
+}
+
+function BrushProc(Brush,Color,Double){
+	var Class='active_brush';
+	var Old=document.getElementsByClassName(Class);
+	if(Old&&Old.length)
+		Old[0].classList.remove(Class);
+	Brush.classList.add(Class);
+	CurrentColor=Color;
+	var Mess,Len,Current,Arr;
+	var Check=document.getElementById('brush_check');
+	if(Check.checked){
+		Check.checked=false;
+		Mess=ParseBunch(document.getElementById('brush_textarea').value);
+		Len=Mess.length;
+		var Elem;
+		for(Current=0;Current<Len;Current++){
+			Elem=document.getElementById(MsgIdToId(Mess[Current].id));
+			if(Elem){
+				if(Color==0)
+					PaintMessage(Elem,Mess[Current].color||1);
+				else
+					PaintMessage(Elem,Color);
+			}
+		}
+		document.getElementById('brush_textarea').value='';
+		return;
+	}
+	if(Double){
+		var Text='';
+		Current=Color;
+		if(Color>0){
+			Class=ColorToClass(Current);
+			Old=document.getElementsByClassName(Class);
+			Len=Old.length;
+			Arr=[];
+			for(var Idx=0;Idx<Len;Idx++){
+				Mess=AllMessagesArray[MsgToIndex[Old[Idx].id]];
+				Mess.color=Current;
+				Arr.push(Mess);
+			}
+			Text+=StringifyBunch(Arr);
+		}else
+			Text=StringifyBunch(AllMessagesArray);
+		document.getElementById('brush_textarea').value=Text+'\n\n\n\n';
+	}
+}
+
+function CheckboxProc(Check){
+	var Checked=Check.checked;
+	if(Checked){
+		document.getElementById('brush_textarea').value='';
+	}
+}
+
+VkMsgExport(function(messages,users,format){
+	Format=format;
+	AllMessagesArray=messages;
+	AllUsersBase=users;
+	CurrentColor=0;
+	MsgToIndex={};
+	IndexToMsg=[];
+	LastClickedMessage=['',''];
+	AllColorsArray=[];
+	var Quote={};
+	var ResultText='';
+	var Length=messages.length;
+	var OldMess=null;
+	var Msg;
+	for(var Index=0;Index<Length;Index++){
+		ResultText+=MessageProc(Index,messages[Index],Quote,0,OldMess);
+		OldMess=messages[Index];
+	}
+	if(Format==MSG)
+		return '<hr>'+ResultText;
+	if(Format==COL)
+		return '<div class="stop" onclick="ColorProc(event,false);" ondblclick="ColorProc(event,true);">'+ResultText+'</div>';
+	return ResultText;
+},function(format){
+	var Css='';
+	Css+='<style>.from{margin-left:64px;}.time{float:right;color:#666;}.head{width:100%;margin-bottom:8pt;}</style>';
+	if(Format==MSG)
+		Css+='<textarea style="position:fixed;bottom:0;right:0;font:normal 6px Arial;white-space:pre;word-wrap:normal;overflow-wrap:normal;overflow-x:scroll;" wrap="off" rows="10" cols="18" ondblclick="TextareaProc(this);"></textarea><style>hr{margin:24px;}</style>';
+	else if(Format==COL){
+		Css+='<div style="position:fixed;bottom:0;right:0;"><table style="float:right;" border="0"><tr><td style="vertical-align:bottom;"><input type="checkbox" id="brush_check" onchange="CheckboxProc(this);"></td><td>';
+		for(var Color=0;Color<ColorToBack.length;Color++)
+			Css+='<input type="button" value="'+Color+'" class="'+(Color==0?'active_brush':'')+'" style="background:'+ColorToBack[Color]+';width:32px;" onclick="BrushProc(this,'+Color+',false);" ondblclick="BrushProc(this,'+Color+',true);">'+(Color%2?'<br>':'');
+		Css+='</td></tr></table><br><textarea style="font:bold 6px Arial;white-space:pre;word-wrap:normal;overflow-wrap:normal;overflow-x:scroll;" wrap="off" rows="10" cols="18" ondblclick="TextareaProc(this);" id="brush_textarea"></textarea></div>';
+		Css+='<style>.message{border:1px dashed #aaa;padding:8px;}.active_brush{font-weight:bold;color:white;}</style>';
+		for(var Color=0;Color<ColorToBack.length;Color++)
+			Css+='<style>.'+ColorToClass(Color)+'{background:'+ColorToBack[Color]+';}</style>';
+		}
+	return Css;
+},
+['txt','raw','msg','col']);
+TXT=0;RAW=1;MSG=2;COL=3;
+window.TextareaProc=TextareaProc;
+window.ColorProc=ColorProc;
+window.BrushProc=BrushProc;
+window.CheckboxProc=CheckboxProc;
+ColorToBack=['#aaa','#fff',
+
+// <colors>
+'#FF6678', // 353
+'#FF9466', // 18
+'#FFCC66', // 40
+'#FFF266', // 55
+'#C4FF66', // 83
+'#66FF99', // 140
+'#66E6FF', // 190
+'#66B3FF', // 210
+'#6673FF', // 235
+'#AD66FF', // 268
+'#DE66FF', // 287
+'#FF66F5', // 304
+// </colors>
+
+
+];})();
+
+</script>
+</body></html>
